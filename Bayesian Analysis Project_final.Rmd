@@ -1,0 +1,318 @@
+---
+title: "Bayesian Analysis Project: Vinho Verde"
+output: html_document
+date: '2023-02-10'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+# Estimating Wine Quality Using Bayesian Analysis
+
+## Overview
+
+We wish to compare Frequentist and Bayesian approaches to logistic regression on the dataset described in the publication by Cortez, P., Cerdeira, A., Almeida, F., Matos, T., & Reis, J. (2009). 'Modeling wine preferences by data mining from physicochemical properties.' 
+
+We first propose a standard GLM and obtain a set of standard coefficients. We then use a Bayesian approach, running a Metropolis-Hastings algorithm. Finally, we plot an example posterior predictive distribution.
+
+## Inital data preparation
+
+We first check for missing values and create a binary response variable 'is_good' (we consider "good" a wine with quality above 6.5 (included)).
+
+```{r, include = FALSE}
+library(mvtnorm)
+library(mcmc)
+```
+
+
+```{r}
+#Read the dataset into R and check if there are missing values.
+wine_quality = read.csv(file = 'winequality-red (2).csv')
+##there are no missing values
+sum(is.na(wine_quality))
+```
+
+```{r}
+wine_quality$is_good = ifelse(wine_quality$quality >=
+                          6.5 , 1 , 0)
+
+# Quick look at our data set
+summary(wine_quality)
+```
+
+## Frequentist analysis
+
+We first run a frequentist analysis on the logistic model using the glm() function.
+
+```{r}
+fre_GLM <- glm(wine_quality$is_good ~ wine_quality$fixed.acidity + wine_quality$volatile.acidity
+               + wine_quality$citric.acid + wine_quality$residual.sugar
+               + wine_quality$chlorides + wine_quality$free.sulfur.dioxide + wine_quality$total.sulfur.dioxide
+               + wine_quality$density + wine_quality$pH + wine_quality$sulphates
+               + wine_quality$alcohol,
+               family = binomial(link="logit") , data=wine_quality)
+summary(fre_GLM)
+```
+At a significance level of 0.05, the coefficients for all variables except citric acid, free sulphur dioxide and pH are significant.
+
+
+## Probability of success
+
+We can now estimate and plot the probability of a wine scoring 'good' (above 6.5) varying total sulfur dioxide.
+
+```{r}
+##set the means
+
+fixed.acidity_mean <- mean(wine_quality$fixed.acidity) 
+volatile.acidity_mean <- mean(wine_quality$volatile.acidity)
+citric.acid_mean <- mean(wine_quality$citric.acid) 
+residual.sugar_mean <- mean(wine_quality$residual.sugar)
+chlorides_mean <- mean(wine_quality$chlorides) 
+free.sulfur.dioxide_mean <- mean(wine_quality$free.sulfur.dioxide)
+density_mean <- mean(wine_quality$density) 
+pH_mean <- mean(wine_quality$pH)
+sulphates_mean <- mean(wine_quality$sulphates) 
+alcohol_mean <- mean(wine_quality$alcohol)
+
+##set the coefficients
+
+b0 <- fre_GLM$coef[1]
+b1 <- fre_GLM$coef[2]
+b2 <- fre_GLM$coef[3]
+b3 <- fre_GLM$coef[4]
+b4 <- fre_GLM$coef[5]
+b5 <- fre_GLM$coef[6]
+b6 <- fre_GLM$coef[7]
+b7 <- fre_GLM$coef[8]
+b8 <- fre_GLM$coef[9]
+b9 <- fre_GLM$coef[10]
+b10 <- fre_GLM$coef[11]
+b11 <- fre_GLM$coef[12]
+
+##run the estimation
+
+total.sulfur.dioxide_range <- seq(from=min(wine_quality$total.sulfur.dioxide), to=max(wine_quality$total.sulfur.dioxide), by=1)
+
+sulfur_dioxide_calc <- b0 + 
+  b1*fixed.acidity_mean + 
+  b2*volatile.acidity_mean + 
+  b3*citric.acid_mean +
+  b4*residual.sugar_mean +
+  b5*chlorides_mean +
+  b6*free.sulfur.dioxide_mean +
+  b7*total.sulfur.dioxide_range +
+  b8*density_mean +
+  b9*pH_mean +
+  b10*sulphates_mean +
+  b11*alcohol_mean
+
+
+##convert from log scale
+
+sulfur_dioxide_prob <- exp(sulfur_dioxide_calc)/(1 + exp(sulfur_dioxide_calc))
+
+##plot the probability of success
+
+plot(total.sulfur.dioxide_range, sulfur_dioxide_prob, 
+
+     type="l", 
+     lwd=3, 
+     lty=2, 
+     col="red", 
+     xlab="Total Sulfur Dioxide", ylab="P(success)", main="Probability of success")
+```
+
+## Bayesian analysis of the logistic model using a Metropolis-Hastings algorithm
+
+We wish to run a Metropolis-Hastings algorithm to estimate the density of the coefficients of our logistic regression.
+
+First, we write a function defining the target distribution for the MH Algorithm (the posterior distribution of the Beta coefficients). We work with the log posterior in this case to avoid numerical problems.
+
+Our function takes a vector of coefficients (beta), the design matrix (x) and the response variable (y) as inputs.
+
+```{r}
+
+## Likelihood is defined as the product of Bernoulli likelihoods for each combination of covariates and response variable for the ith instance
+
+lpost.LR <- function(beta,x,y)
+{
+  eta <- as.numeric(x %*% beta)
+  
+  ##probability y=1 in log scale
+  logp <- eta - log(1+exp(eta))
+  
+  ##probability y=0 in log scale (1 - prob y=1)
+  logq <- log(1-exp(logp))
+  
+  ##likelihood
+  logl <- sum(logp[y==1]) + sum(logq[y==0])
+  
+  ##using a normal distribution centered at beta for our prior
+  lprior <- sum(dnorm(beta,0,10,log=T))
+  return(logl + lprior)
+}
+```
+
+We now set the number of simulations at 10^4 and initialise using our MLE estimators from the GLM.
+
+```{r}
+
+#Fix the number of simulation at 10^4
+
+S <- 10^4
+
+##design matrix - including vector of ones for the intercept
+
+X=cbind(rep(1,nrow(wine_quality)),wine_quality$fixed.acidity,
+         wine_quality$volatile.acidity,wine_quality$citric.acid, wine_quality$residual.sugar,
+         wine_quality$chlorides, wine_quality$free.sulfur.dioxide, wine_quality$total.sulfur.dioxide,
+         wine_quality$density, wine_quality$pH, wine_quality$sulphates, wine_quality$alcohol)
+
+##response variable
+
+y <- wine_quality$is_good
+
+
+##create empty matrix
+beta_mat <- matrix(NA,nrow=S,ncol=ncol(X))
+
+##initialise at MLE estimators
+beta_mat[1,] <- as.numeric(coefficients(fre_GLM))
+
+
+```
+
+Now, we run the algorithm and plot the results:
+
+```{r}
+
+##start acceptance rate count
+acc <- 0
+
+Omega_prop <- solve(t(X) %*% X)
+
+##MH Algorithm
+
+for(iter in 2:S)
+{
+  #Propose a new set of values using a multivariate normal distribution
+  beta_star <- rmvnorm(1, beta_mat[iter-1,],0.5*Omega_prop)
+  
+  #Compute the target posterior density on the proposed value and on the old value 
+  ##we don't need to calculate the ratio between the proposal distributions as we have a symmetric distribution and the ratio always equals one
+  newpost=lpost.LR(t(beta_star),X,y)
+  oldpost=lpost.LR(matrix(beta_mat[iter-1,],ncol=1),X,y)
+  
+  #Acceptance step
+  if(runif(1,0,1)>exp(newpost-oldpost)){
+    beta_mat[iter,]=beta_mat[iter-1,]
+  } else{
+    beta_mat[iter,]=beta_star
+    ##track acceptance rate
+    acc=acc+1
+  }
+  #Print the stage of the chain
+  if(iter%%1000==0){print(c(iter,acc/iter))}
+}
+
+```
+
+Note an acceptance rate of around 31% which is a little above the standard target of 23% but still acceptable.
+
+```{r, echo=FALSE, out.width="100%"}
+
+##Plot the outputs
+
+par(mfrow=c(1,3))
+plot(beta_mat[,1],type="l", ylab=expression(beta[0]), main = 'Intercept')
+abline(h=fre_GLM$coefficients[1],col="red",lty=2)
+plot(beta_mat[,2],type="l", ylab=expression(beta[1]), main = 'fixed.acidity')
+abline(h=fre_GLM$coefficients[2],col="red",lty=2)
+plot(beta_mat[,3],type="l", ylab=expression(beta[2]), main = 'volatile.acidity')
+abline(h=fre_GLM$coefficients[3],col="red",lty=2)
+par(mfrow=c(1,3))
+plot(beta_mat[,4],type="l", ylab=expression(beta[3]), main = 'citric.acid')
+abline(h=fre_GLM$coefficients[4],col="red",lty=2)
+plot(beta_mat[,5],type="l", ylab=expression(beta[4]), main = 'residual.sugar')
+abline(h=fre_GLM$coefficients[5],col="red",lty=2)
+plot(beta_mat[,6],type="l", ylab=expression(beta[5]), main = 'chlorides')
+abline(h=fre_GLM$coefficients[6],col="red",lty=2)
+par(mfrow=c(1,3))
+plot(beta_mat[,7],type="l", ylab=expression(beta[6]), main = 'free.sulfur.dioxide')
+abline(h=fre_GLM$coefficients[7],col="red",lty=2)
+plot(beta_mat[,8],type="l", ylab=expression(beta[7]), main = 'total.sulfur.dioxide')
+abline(h=fre_GLM$coefficients[8],col="red",lty=2)
+plot(beta_mat[,9],type="l", ylab=expression(beta[8]), main = 'density')
+abline(h=fre_GLM$coefficients[9],col="red",lty=2)
+par(mfrow=c(1,3))
+plot(beta_mat[,10],type="l", ylab=expression(beta[9]), main = 'pH')
+abline(h=fre_GLM$coefficients[10],col="red",lty=2)
+plot(beta_mat[,11],type="l", ylab=expression(beta[10]), main = 'sulphates')
+abline(h=fre_GLM$coefficients[11],col="red",lty=2)
+plot(beta_mat[,12],type="l", ylab=expression(beta[11]), main = 'alcohol')
+abline(h=fre_GLM$coefficients[12],col="red",lty=2)
+```
+
+We note a lack of convergent behaviour in many of our variables. A larger number of iterations may be necessary, or a more individualised approach to each estimate (such as a finer tuning of the standard deviation of the Gaussian proposal distribution).
+
+
+## Posterior predictive distribution
+
+We can now approximate the posterior predictive distribution of an unobserved variable. For example, we plot the posterior distribution of a variable charecterised by:
+
+•	fixed acidity: 7.5
+
+•	volatile acidity: 0.6
+
+•	citric acid: 0.0
+
+•	residual sugar: 1.70
+
+•	chlorides: 0.085
+
+•	free sulfur dioxide: 5
+
+•	total sulfur dioxide: 45
+
+•	density: 0.9965
+
+•	pH: 3.40
+
+•	sulphates: 0.63
+
+•	alcohol: 12 
+
+In this instance, we run our algorithm:
+
+```{r echo=FALSE, out.width = "30%", fig.align = "center"}
+knitr::include_graphics("/Users/eamonnbriers/Desktop/Picture 1.png")
+```
+
+
+over the accepted values using the MLE estimates initialisation. We then simulate observations from a Bernoulli distribution using this probability of success. We visualise below with a burn in of 2,000 simulations.
+
+
+```{r}
+
+##Prediction
+
+y_new <- c(1)
+x_new <- c(1,7.5, 0.6, 0.0, 1.7, 0.085, 5, 45, 0.9965, 3.4, 0.63, 12)
+
+for(iter in 2:S)
+{
+  expsum <- exp(sum(beta_mat[iter,] * x_new) )
+  p_new <-  expsum/ (1 + expsum)
+  y_new[iter] <- rbinom(1,1,prob=p_new)
+}
+```
+
+
+```{r, echo=FALSE, out.width="100%"}
+#2000 burn in
+#density plot
+barplot(table(y_new[2000:10000]), main = 'Posterior Predictive Density')
+```
+
