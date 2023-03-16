@@ -1,0 +1,128 @@
+---
+title: "Bayesian Analysis Project: Vinho Verde"
+output: html_document
+date: '2023-02-10'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+# Estimating Wine Quality using Bayesian Analysis
+
+## Aims and inital data exploration
+
+We are performing a logistic regression on the dataset described in the publication by Cortez, P., Cerdeira, A., Almeida, F., Matos, T., & Reis, J. (2009). 'Modeling wine preferences by data mining from physicochemical properties.'
+
+
+```{r, include = FALSE}
+library(mvtnorm)
+```
+
+
+```{r}
+#Read the dataset into R and check if there are missing values.
+wine_quality = read.csv(file = 'winequality-red (2).csv')
+##there are no missing values
+sum(is.na(wine_quality))
+```
+
+Suppose we consider "good" a wine with quality above 6.5 (included). We then create binary variable 'is_good'.
+
+```{r}
+wine_quality$is_good = ifelse(wine_quality$quality >=
+                          6.5 , 1 , 0)
+
+# Quick look at our data set
+summary(wine_quality)
+```
+
+## Frequentist Analysis
+
+4. We first run a frequentist analysis on the logistic model using the glm() function. At a significance level of 0.05, the coefficients for the following variables are significant:
+•	Intercept
+•	Fixed acidity
+•	Volatile acidity
+•	Residual sugar
+•	Chlorides
+•	Total sulfur dioxide
+•	Density
+•	Sulphates
+•	Alcohol
+
+```{r}
+fre_GLM <- glm(wine_quality$is_good ~ wine_quality$fixed.acidity + wine_quality$volatile.acidity
+               + wine_quality$citric.acid + wine_quality$residual.sugar
+               + wine_quality$chlorides + wine_quality$free.sulfur.dioxide + wine_quality$total.sulfur.dioxide
+               + wine_quality$density + wine_quality$pH + wine_quality$sulphates
+               + wine_quality$alcohol,
+               family = binomial(link="logit") , data=wine_quality)
+summary(fre_GLM)
+```
+
+## Probability of success
+
+We now estimate and plot the probability of a wine scoring 'good' (above 6.5) varying total sulfur dioxide.
+
+```{r}
+
+##set the means
+
+fixed.acidity_mean <- mean(wine_quality$fixed.acidity) 
+volatile.acidity_mean <- mean(wine_quality$volatile.acidity)
+citric.acid_mean <- mean(wine_quality$citric.acid) 
+residual.sugar_mean <- mean(wine_quality$residual.sugar)
+chlorides_mean <- mean(wine_quality$chlorides) 
+free.sulfur.dioxide_mean <- mean(wine_quality$free.sulfur.dioxide)
+density_mean <- mean(wine_quality$density) 
+pH_mean <- mean(wine_quality$pH)
+sulphates_mean <- mean(wine_quality$sulphates) 
+alcohol_mean <- mean(wine_quality$alcohol)
+
+##set the coefficients
+
+b0 <- fre_GLM$coef[1]
+b1 <- fre_GLM$coef[2]
+b2 <- fre_GLM$coef[3]
+b3 <- fre_GLM$coef[4]
+b4 <- fre_GLM$coef[5]
+b5 <- fre_GLM$coef[6]
+b6 <- fre_GLM$coef[7]
+b7 <- fre_GLM$coef[8]
+b8 <- fre_GLM$coef[9]
+b9 <- fre_GLM$coef[10]
+b10 <- fre_GLM$coef[11]
+b11 <- fre_GLM$coef[12]
+
+## Run the estimation
+
+sulfur_dioxide_calc <- b0 + 
+  b1*fixed.acidity_mean + 
+  b2*volatile.acidity_mean + 
+  b3*citric.acid_mean +
+  b4*residual.sugar_mean +
+  b5*chlorides_mean +
+  b6*free.sulfur.dioxide_mean +
+  b7*total.sulfur.dioxide_range +
+  b8*density_mean +
+  b9*pH_mean +
+  b10*sulphates_mean +
+  b11*alcohol_mean
+
+## Convert from log-scale
+sulfur_dioxide_prob <- exp(sulfur_dioxide_calc)/(1 + exp(sulfur_dioxide_calc))
+
+##plot the probabilities
+
+total.sulfur.dioxide_range <- seq(from=min(wine_quality$total.sulfur.dioxide), to=max(wine_quality$total.sulfur.dioxide), by=1)
+
+plot(total.sulfur.dioxide_range, sulfur_dioxide_prob, 
+
+     type="l", 
+     lwd=3, 
+     lty=2, 
+     col="red", 
+     xlab="Total Sulfur Dioxide", ylab="P(success)", main="Probability of success")
+```
+
